@@ -187,6 +187,67 @@ p = {
 	timer_onKey: false
 };
 
+// Now playing UI Button init
+p.nowPlayingBtn = new UIButton({
+    x: 0,
+    y: 0,
+    w: (typeof z === "function") ? z(30) : 30,
+    h: (typeof z === "function") ? z(30) : 30,
+    tooltip: "当前播放",
+    visible: false,
+    draw: function(gr) {
+        if (!this.visible) return;
+
+
+        // 高亮环 / 圆点，可参考之前按钮绘制逻辑
+        var cx = Math.round(this.x + this.w / 2);
+        var cy = Math.round(this.y + this.h / 2);
+        var outerR = Math.floor(Math.min(this.w, this.h) / 2);
+        var stroke = Math.max(1, g_z2 || 2);
+        var innerR = Math.max(1, outerR - stroke - g_z6);
+        var dotR = Math.max(1, Math.round(outerR / 4));
+
+        // 颜色
+        var ringColor = g_color_highlight || RGB(255, 255, 255);
+        var ringAlpha = 200;
+        var dotColor = g_color_normal_bg ? g_color_normal_bg ^ 0x00ffffff : RGB(255, 255, 255);
+
+        function rgbaFromInt(col, alpha) {
+            var r = (col >> 16) & 255;
+            var g = (col >> 8) & 255;
+            var b = col & 255;
+            return RGBA(r, g, b, alpha);
+        }
+
+        var ringFill = rgbaFromInt(ringColor, ringAlpha);
+        var insideFill = g_color_normal_bg;
+        var dotFill = rgbaFromInt(ringColor, 255);
+
+        gr.SetSmoothingMode(2);
+        try {
+            // 外圆
+            gr.FillEllipse(this.x, this.y, this.w, this.h, ringFill);
+            // 内圆（挖空）
+            var innerX = this.x + (outerR - innerR);
+            var innerY = this.y + (outerR - innerR);
+            var innerW = innerR * 2;
+            var innerH = innerR * 2;
+            if (innerW > 0 && innerH > 0) gr.FillEllipse(innerX, innerY, innerW, innerH, insideFill);
+            // 中心点
+            var dotX = cx - dotR;
+            var dotY = cy - dotR;
+            var dotW = dotR * 2;
+            var dotH = dotR * 2;
+            gr.FillEllipse(dotX, dotY, dotW, dotH, dotFill);
+        } catch (e) {}
+
+        gr.SetSmoothingMode(0);
+
+        // tooltip 绘制
+        this.drawTooltip(gr);
+    }
+});
+
 cTouch = {
 	down: false,
 	y_start: 0,
@@ -290,6 +351,57 @@ columns = {
 	mood_w: 0,
 	mood_drag: false
 };
+// Now playing UI Button #1
+// 判断当前播放曲目是否可视：基于 p.list.items 列表查找 playing index
+
+function isNowPlayingVisible() {
+
+	
+    try {
+        //if (!fb.IsPlaying || fb.IsPaused) return false; // 只有“播放”状态才算可见
+        if (!p.list || !p.list.nowplaying) return false;
+        var playingLoc = p.list.nowplaying.PlaylistItemIndex;
+        if (typeof playingLoc === "undefined" || playingLoc === null) return false;
+        var fin = p.list.items ? p.list.items.length : 0;
+        for (var i = 0; i < fin; i++) {
+            var it = p.list.items[i];
+            if (it && it.type == 0 && it.empty_row_index == 0 && it.track_index == playingLoc) {
+                // 出现在当前 items 中并且 row_index 在可见范围内
+                if (it.row_index >= 0 && it.row_index < p.list.totalRowVisible) return true;
+            }
+        }
+    } catch (e) {}
+    return false;
+}
+
+// 计算并设置按钮矩形（在 on_paint 中或 on_size 后调用）
+function updateNowPlayingBtnRect() {
+    var margin = (typeof z === "function") ? z(30) : 30; // 右/下边距（DPI 缩放）
+    var size = (typeof z === "function") ? z(30) : 30;
+    p.nowPlayingBtn.w = size;
+    p.nowPlayingBtn.h = size;
+
+    if (p.list && typeof p.list.x !== "undefined" && typeof p.list.y !== "undefined" && typeof p.list.w !== "undefined" && typeof p.list.h !== "undefined") {
+        var listRight = p.list.x + p.list.w;
+        var listBottom = p.list.y + p.list.h;
+        var hx = Math.floor(listRight - p.nowPlayingBtn.w - margin);
+        var hy = Math.floor(listBottom - p.nowPlayingBtn.h - margin);
+        // 保证按钮不跑出列表区域
+        hx = Math.max(p.list.x + 4, hx);
+        hy = Math.max(p.list.y + 4, hy);
+        p.nowPlayingBtn.x = hx;
+        p.nowPlayingBtn.y = hy;
+    } else {
+        // 回退到 window 右下角
+        p.nowPlayingBtn.x = Math.max(4, Math.floor(window.Width - p.nowPlayingBtn.w - margin));
+        p.nowPlayingBtn.y = Math.max(4, Math.floor(window.Height - p.nowPlayingBtn.h - margin));
+    }
+
+    // visible 标记按播放状态与当前播放是否在可视范围计算
+    p.nowPlayingBtn.visible = (plman.PlayingPlaylist != -1 && !isNowPlayingVisible());
+}
+
+// ========== END ADD ==========
 
 // Smoother scrolling in playlist
 
@@ -515,6 +627,58 @@ function get_metrics() {
 	cTrack.height = z(cRow.playlist_h);
 }
 
+// Common UIButton with Tooltip
+function UIButton(params) {
+    this.x = params.x || 0;
+    this.y = params.y || 0;
+    this.w = params.w || 30;
+    this.h = params.h || 30;
+    this.visible = params.visible || false;
+    this.pressed = false;
+    this.tooltip = params.tooltip || "";
+
+    // 判断鼠标是否悬停
+    this.isHover = function(mx, my) {
+        if (!this.visible) return false;
+        return mx > this.x && mx < this.x + this.w && my > this.y && my < this.y + this.h;
+    };
+
+    // 绘制按钮
+    this.draw = params.draw || function(gr) {
+        if (!this.visible) return;
+
+        // 绘制圆角矩形背景
+        gr.FillRoundRect(this.x, this.y, this.w, this.h, this.corner, g_z5, g_color_normal_bg);
+
+        // 绘制 tooltip
+        this.drawTooltip(gr);
+    };
+
+    // tooltip 绘制
+    this.drawTooltip = function(gr) {
+    	console.log(!this.isHover(mouse_x, mouse_y));
+    	if (!this.isHover(mouse_x, mouse_y)) return;
+		console.log("not return");
+        var padding = 6;
+        var textW = gr.CalcTextWidth(this.tooltip, g_font);
+        var textH = g_fsize;
+        var tooltipW = textW + padding*2;
+        var tooltipH = textH + padding*2;
+
+        // 默认左侧显示
+        var tx = this.x - tooltipW - 4;
+        var ty = this.y + (this.h - tooltipH)/2;
+
+        // 超出窗口自适应
+        if (tx < 0) tx = this.x + this.w + 4;
+        if (ty < 0) ty = 0;
+        if (ty + tooltipH > window.Height) ty = window.Height - tooltipH;
+        gr.FillRoundRect(tx, ty, tooltipW, tooltipH, 4, 4, g_color_topbar);
+        gr.GdiDrawText(this.tooltip, g_font, g_color_normal_txt, tx+padding, ty+padding, textW, textH, lc_txt);
+    	
+    };
+}
+
 //=================================================// Init
 system_init();
 function on_init() {
@@ -684,6 +848,14 @@ function on_paint(gr) {
 				};
 			};
 		};
+		// Now playing UI Button #2
+		try {
+		    updateNowPlayingBtnRect();
+		    if (p.nowPlayingBtn.visible) p.nowPlayingBtn.draw(gr);
+		} catch (e) {}
+
+
+
 		// Incremental Search Display
 		if (cList.search_string.length > 0) {
 			var string_w = gr.CalcTextWidth(cList.search_string, cList.incsearch_font);
@@ -708,6 +880,15 @@ function on_paint(gr) {
 
 // Mouse Callbacks
 function on_mouse_lbtn_down(x, y) {
+	// Now playing UI Button #3
+	try { updateNowPlayingBtnRect(); } catch (e) {}
+	if (p.nowPlayingBtn.visible && p.nowPlayingBtn.isHover(x, y)) {
+	    p.nowPlayingBtn.pressed = true;
+	    g_left_click_hold = true;
+	    return;
+	}
+    //END Now Playing
+
 
 	if (properties.enableTouchControl) {
 		cTouch.up_id = -1;
@@ -810,6 +991,27 @@ function on_mouse_lbtn_dblclk(x, y, mask) {
 };
 
 function on_mouse_lbtn_up(x, y) {
+	// Now playing UI Button #4 
+    try { updateNowPlayingBtnRect(); } catch (e) {}
+    if (p.nowPlayingBtn && p.nowPlayingBtn.pressed) {
+        p.nowPlayingBtn.pressed = false; // 清理状态
+        // 只有在释放点仍在按钮区域时触发点击动作
+        if (!cSettings.visible && p.nowPlayingBtn.visible &&
+            x >= p.nowPlayingBtn.x && x <= p.nowPlayingBtn.x + p.nowPlayingBtn.w &&
+            y >= p.nowPlayingBtn.y && y <= p.nowPlayingBtn.y + p.nowPlayingBtn.h) {
+            // 执行“显示正在播放”行为（等同于文件中 1317-1320 行）
+            try {
+                p.list.showNowPlaying();
+                p.scrollbar.setCursor(p.list.totalRowVisible, p.list.totalRows, p.list.offset);
+                full_repaint();
+            } catch (e) {}
+            // 吃掉此次点击事件，阻止继续传递给列表及拖拽逻辑
+            return;
+        }
+        // 如果释放点不在按钮上，什么也不做（只是清理 pressed），并且不把事件继续交给列表
+        return;
+    }
+
 
 	// check settings
 	if (cSettings.visible) {
@@ -927,6 +1129,18 @@ function on_mouse_rbtn_up(x, y) {
 };
 
 function on_mouse_move(x, y) {
+	// Now playing UI Button #5
+    let oldHover = p.nowPlayingBtn.hover;
+    let newHover = p.nowPlayingBtn.isHover(mouse_x, mouse_y);
+
+    // 更新 hover 状态
+    if (newHover !== oldHover) {
+        p.nowPlayingBtn.hover = newHover;
+        // 在 hover 状态变更时触发重绘（按钮 + tooltip）
+        window.Repaint();
+    }
+	// END Now playing UI Button
+
 
 	if (x == mouse_x && y == mouse_y) return true;
 
@@ -1836,6 +2050,7 @@ function on_playback_order_changed(new_order_index) {
 };
 
 function on_focus(is_focused) {
+	if (!is_focused) {p.nowPlayingBtn.hover = false; window.Repaint()}
 	if (cSettings.visible) {
 		p.settings.on_focus(is_focused);
 		full_repaint();
